@@ -1,0 +1,345 @@
+from datetime import date, timedelta
+import logging
+import os
+import json
+
+import azure.functions as func
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
+
+from..Shared_Code import dcmConnectorForAzure
+
+KVUri = os.environ["KVUri"]
+credential = DefaultAzureCredential()
+client = SecretClient(vault_url=KVUri, credential=credential)
+
+blob_account_name_secret = client.get_secret("blob_account_name")
+blob_account_name = blob_account_name_secret.value
+blob_container_name_secret = client.get_secret("blob_container_name")
+blob_container_name = blob_container_name_secret.value
+blob_access_key_secret = client.get_secret("blob_access_key")
+blob_access_key = blob_access_key_secret.value
+
+service_account_key_secret = client.get_secret("google_service_account_key")
+service_account_key = eval(service_account_key_secret.value)
+
+metric_names = ["dfa:impressions",
+
+                "dfa:clicks",
+
+                "dfa:clickRate",
+
+                "dfa:activeViewViewableImpressions",
+
+                "dfa:activeViewMeasurableImpressions",
+
+                "dfa:activeViewEligibleImpressions",
+
+                "dfa:totalConversions",
+
+                "dfa:beginToRenderEligibleImpressions",
+
+                "dfa:beginToRenderImpressions",
+
+                "dfa:bookedActivities",
+
+                "dfa:bookedImpressions",
+
+                "dfa:bookedClicks",
+
+                "dfa:bookedViewableImpressions",
+
+                "dfa:dbmCost",
+
+                "dfa:dbmCostUsd",
+
+                "dfa:downloadedImpressions",
+
+                "dfa:richMediaHtml5Impressions",
+
+                "dfa:roadblockImpressions",
+
+                "dfa:trackedAds",
+
+                "dfa:activeViewPercentageMeasurableImpressions",
+
+                "dfa:activeViewPercentageViewableImpressions",
+
+                "dfa:activeViewAverageViewableTimeSecond",
+
+                "dfa:activeViewImpressionDistributionNotMeasurable",
+
+                "dfa:activeViewImpressionDistributionNotViewable",
+
+                "dfa:activeViewImpressionDistributionViewable",
+
+                "dfa:activeViewNotMeasurableImpressions",
+
+                "dfa:activeViewNotViewableImpressions",
+
+                "dfa:activeViewPercentVisible10Seconds",
+
+                "dfa:activeViewPercentVisibleAtStart",
+
+                "dfa:activeViewImpressionsVisible10Seconds",
+
+                "dfa:activeViewPercentVisibleAtFirstQuartile",
+
+                "dfa:activeViewPercentVisibleAtMidpoint",
+
+                "dfa:activeViewPercentVisibleAtThirdQuartile",
+
+                "dfa:activeViewPercentVisibleAtCompletion",
+
+                "dfa:activeViewPercentAudibleAndVisibleAtFirstQuartile",
+
+                "dfa:activeViewPercentAudibleAndVisibleAtStart",
+
+                "dfa:activeViewPercentAudibleAndVisibleAtMidpoint",
+
+                "dfa:activeViewPercentAudibleAndVisibleAtThirdQuartile",
+
+                "dfa:activeViewPercentAudibleAndVisibleAtCompletion",
+
+                "dfa:activeViewImpressionsAudibleAndVisibleAtCompletion",
+
+                "dfa:activeViewPercentImpressionsVisibleAtFirstQuartile",
+
+                "dfa:activeViewPercentImpressionsVisibleAtThirdQuartile",
+
+                "dfa:activeViewPercentImpressionsVisibleAtMidpoint",
+
+                "dfa:activeViewPercentImpressionsVisibleAtCompletion",
+
+                "dfa:activeViewPercentImpressionsAudibleAndVisibleAtFirstQuartile",
+
+                "dfa:activeViewPercentImpressionsAudibleAndVisibleAtMidpoint",
+
+                "dfa:activeViewPercentImpressionsAudibleAndVisibleAtThirdQuartile",
+
+                "dfa:activeViewPercentImpressionsAudibleAndVisibleAtCompletion",
+
+                "dfa:activeViewPercentAudibleImpressions",
+
+                "dfa:activeViewPercentImpressionsAudibleAndFullyOnscreen",
+
+                "dfa:activeViewGroupmViewableImpressions",
+
+                "dfa:activeViewGroupmMeasurableImpressions",
+
+                "dfa:activeViewPercentImpressionsAudibleAndFullyOnscreenForHalfDuration",
+
+                "dfa:activeViewGroupmTrvViewableImpressions",
+
+                "dfa:activeViewGroupmTrvMeasurableImpressions",
+
+                "dfa:actiewViewPercentAdPlayed",
+
+                "dfa:activeViewPercentPlayTimeVisible",
+
+                "dfa:activeViewPercentPlayTimeAudible",
+
+                "dfa:activeViewPercentPlayTimeAudibleAndVisible",
+
+                "dfa:activeViewPercentFullscreen",
+
+                "dfa:activeViewPercentBackground",
+
+                "dfa:activeViewCustomMetricViewableRate",
+
+                "dfa:activeViewCustomMetricViewableImpressions",
+
+                "dfa:activeViewCustomMetricMeasurableImpressions",
+
+                "dfa:activityClickThroughConversions",
+
+                "dfa:activityClickThroughRevenue",
+
+                "dfa:revenuePerClick",
+
+                "dfa:revenuePerThousandImpressions",
+
+                "dfa:totalConversionsRevenue",
+
+                "dfa:activityViewThroughConversions",
+
+                "dfa:activityViewThroughRevenue",
+
+                "dfa:videoCompanionClicks",
+
+                "dfa:videoCompanionImpressions",
+
+                "dfa:richMediaTrueViewViews",
+
+                "dfa:richMediaVideoProgressEvents",
+
+                "dfa:richMediaVideoSkips",
+
+                "dfa:activityDeliveryStatus",
+
+                "dfa:clickDeliveryStatus",
+
+                "dfa:mediaCost",
+
+                "dfa:plannedMediaCost",
+
+                "dfa:richMediaAverageDisplayTime",
+
+                "dfa:richMediaAverageExpansionTime",
+
+                "dfa:richMediaAverageInteractionTime",
+
+                "dfa:richMediaCustomAverageTime",
+
+                "dfa:richMediaBackupImages",
+
+                "dfa:richMediaCustomCounters",
+
+                "dfa:richMediaCodeServes",
+
+                "dfa:richMediaEventCounters",
+
+                "dfa:richMediaEventTimers",
+
+                "dfa:richMediaCustomExits",
+
+                "dfa:richMediaExpansionTime",
+
+                "dfa:richMediaExpansions",
+
+                "dfa:richMediaAverageFullScreenViewTime",
+
+                "dfa:richMediaFullScreenImpressions",
+
+                "dfa:richMediaFullScreenVideoCompletes",
+
+                "dfa:richMediaFullScreenVideoPlays",
+
+                "dfa:richMediaInteractionRate",
+
+                "dfa:richMediaInteractiveImpressions",
+
+                "dfa:richMediaManualCloses",
+
+                "dfa:richMediaClickRate",
+
+                "dfa:richMediaClicks",
+
+                "dfa:richMediaEngagements",
+
+                "dfa:richMediaImpressions",
+
+                "dfa:richMediaScrolls",
+
+                "dfa:richMediaCustomTimers",
+
+                "dfa:richMediaDisplayTime",
+
+                "dfa:richMediaInteractionTime",
+
+                "dfa:richMediaInteractions",
+
+                "dfa:richMediaAverageVideoViewTime",
+
+                "dfa:richMediaVideoFirstQuartileCompletes",
+
+                "dfa:richMediaVideoThirdQuartileCompletes",
+
+                "dfa:richMediaVideoMidpoints",
+
+                "dfa:richMediaVideoCompletions",
+
+                "dfa:richMediaVideoCompanionClicks",
+
+                "dfa:richMediaVideoInteractionRate",
+
+                "dfa:richMediaVideoFullScreens",
+
+                "dfa:richMediaVideoInteractions",
+
+                "dfa:richMediaVideoMutes",
+
+                "dfa:richMediaVideoPauses",
+
+                "dfa:richMediaVideoPlays",
+
+                "dfa:richMediaVideoReplays",
+
+                "dfa:richMediaVideoStops",
+
+                "dfa:richMediaVideoUnmutes",
+
+                "dfa:richMediaVideoViewRate",
+
+                "dfa:socialFollows",
+
+                "dfa:socialLikes",
+
+                "dfa:socialOtherInteractions",
+
+                "dfa:socialSharesExternal",
+
+                "dfa:socialReplies",
+
+                "dfa:socialSharesInternal",
+
+                "dfa:socialEngagementRate",
+
+                "dfa:socialTotalEngagements"]
+
+dimensions = [{"name":  "dfa:campaign"},
+
+              {"name":  "dfa:campaignId"},
+
+              {"name":  "dfa:site"},
+
+              {"name":  "dfa:placement"},
+
+              {"name":  "dfa:date"},
+
+              {"name":  "dfa:activity"},
+
+              {"name":  "dfa:activityGroup"},
+
+              {"name":  "dfa:activityGroupId"},
+
+              {"name":  "dfa:activityId"},
+
+              {"name":  "dfa:ad"},
+
+              {"name":  "dfa:adId"},
+
+              {"name":  "dfa:advertiser"},
+
+              {"name":  "dfa:advertiserGroup"},
+
+              {"name":  "dfa:advertiserId"},
+
+              {"name":  "dfa:creative"},
+
+              {"name":  "dfa:creativeId"},
+
+              {"name":  "dfa:floodlightConfigId"},
+
+              {"name":  "dfa:placementId"},
+
+              {"name":  "dfa:siteId"},
+
+              {"name":  "dfa:platformType"},
+
+              {"name":  "dfa:browserPlatform"}
+
+ 
+
+              ]
+
+start_date = date.today() - timedelta(days=1)
+
+end_date = date.today() - timedelta(days=1)
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+   dcm = dcmConnectorForAzure()
+   dcm.authenticate_using_service_account(service_account_key)
+   dcm.create_report(metric_names,dimensions,start_date,end_date)
+   return func.HttpResponse(json.dumps({"report_id":dcm.report_id}))
