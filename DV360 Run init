@@ -1,0 +1,33 @@
+from datetime import date, timedelta
+import logging
+import os
+import json
+
+import azure.functions as func
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
+
+from..Shared_Code import dcmConnectorForAzure
+
+KVUri = os.environ["KVUri"]
+credential = DefaultAzureCredential()
+client = SecretClient(vault_url=KVUri, credential=credential)
+
+blob_account_name_secret = client.get_secret("blob_account_name")
+blob_account_name = blob_account_name_secret.value
+blob_container_name_secret = client.get_secret("blob_container_name")
+blob_container_name = blob_container_name_secret.value
+blob_access_key_secret = client.get_secret("blob_access_key")
+blob_access_key = blob_access_key_secret.value
+
+service_account_key_secret = client.get_secret("google_service_account_key")
+service_account_key = eval(service_account_key_secret.value)
+
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    report_id = req.params.get("report_id")
+    dcm = dcmConnectorForAzure()
+    dcm.authenticate_using_service_account(service_account_key)
+    dcm.download_report(report_id, blob_account_name , blob_access_key, blob_container_name)
+    return func.HttpResponse(json.dumps({"report_id":dcm.report_id}))
