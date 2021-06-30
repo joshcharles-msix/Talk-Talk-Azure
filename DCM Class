@@ -1,0 +1,211 @@
+import glob
+import io
+import logging
+import os
+import random
+import sys
+import time
+from datetime import date, timedelta
+from io import StringIO
+from os import path
+
+import httplib2
+import pandas as pd
+import requests as rq
+from google.oauth2 import service_account
+from googleapiclient import discovery, http
+from oauth2client import client
+from oauth2client import file as oauthFile
+from oauth2client import tools
+from oauth2client.file import Storage
+from oauth2client.service_account import ServiceAccountCredentials
+from pandas.io.json import json_normalize
+from azure.storage.blob import BlockBlobService
+
+
+class dcmConnectorForAzure():
+    def __init__(self):
+        self.profile_id = 0
+        self.report_id = 0
+
+    def authenticate_using_service_account(self, json_keyfile_dict):
+        # path_to_service_account_json_file = os.path.abspath(service_account_json_file)
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+            json_keyfile_dict, scopes=['https://www.googleapis.com/auth/dfareporting'])
+
+        self.http = credentials.authorize(httplib2.Http())
+
+        self.service = discovery.build('dfareporting', 'v3.4', http=self.http)
+        service = self.service
+
+        request = service.userProfiles().list()
+
+        response = request.execute()
+
+        for profile in response['items']:
+            self.profile_id = profile["profileId"]
+
+    def create_and_run_report(self, metric_names, dimension_names, start_date, end_date):
+        service = self.service
+        report = {
+            'name': 'dcm_daily_report',
+            'type': 'STANDARD',
+            'fileName': 'dcm_daily_report',
+            'format': 'CSV'
+        }
+
+        criteria = {
+            'dateRange': {
+                'startDate': start_date.strftime('%Y-%m-%d'),
+                'endDate': end_date.strftime('%Y-%m-%d')
+            },
+            'dimensions': dimension_names,
+            'metricNames': metric_names
+        }
+
+        report["criteria"] = criteria
+
+        inserted_report = service.reports().insert(
+            profileId=self.profile_id, body=report).execute()
+
+        self.report_id = inserted_report['id']
+        print(self.report_id)
+
+        self.__write_id_to_file("report_id.txt", inserted_report["id"])
+
+        report_file = service.reports().run(profileId=self.profile_id,
+                                            reportId=self.report_id).execute()
+
+    def create_and_run_reach_report(self, metric_names, dimension_names, start_date, end_date):
+        service = self.service
+        report = {
+            'name': 'dcm_daily_reach_report',
+            'type': 'REACH',
+            'fileName': 'dcm_daily_reach_report',
+            'format': 'CSV'
+        }
+
+        reachCriteria = {
+            'dateRange': {
+                'startDate': start_date.strftime('%Y-%m-%d'),
+                'endDate': end_date.strftime('%Y-%m-%d')
+            },
+            'dimensions': dimension_names,
+            'metricNames': metric_names
+        }
+
+        report["reachCriteria"] = reachCriteria
+
+        inserted_report = service.reports().insert(
+            profileId=self.profile_id, body=report).execute()
+
+        self.report_id = inserted_report['id']
+        print(self.report_id)
+
+        self.__write_id_to_file("reach_report_id.txt", inserted_report["id"])
+
+        report_file = service.reports().run(profileId=self.profile_id,
+                                            reportId=self.report_id).execute()
+
+    def create_and_run_floodlight_report(self, metric_names, dimension_names, floodlightConfigId, start_date, end_date, report_type=None):
+        service = self.service
+        report = {
+            'name': 'dcm_daily_floodlight_report',
+            'type': 'FLOODLIGHT',
+            'fileName': 'dcm_daily_floodlight_report',
+            'format': 'CSV'
+        }
+
+        floodlightCriteria = {
+            'dateRange': {
+                'startDate': start_date.strftime('%Y-%m-%d'),
+                'endDate': end_date.strftime('%Y-%m-%d')
+            },
+            'floodlightConfigId': {
+                'dimensionName': "dfa:floodlightConfigId",
+                'value': floodlightConfigId
+            },
+            'dimensions': dimension_names,
+            'metricNames': metric_names
+        }
+
+        report["floodlightCriteria"] = floodlightCriteria
+
+        inserted_report = service.reports().insert(
+            profileId=self.profile_id, body=report).execute()
+
+        self.report_id = inserted_report['id']
+        print(self.report_id)
+
+        self.__write_id_to_file(
+            "floodlight_report_id.txt", inserted_report["id"])
+
+        report_file = service.reports().run(profileId=self.profile_id,
+                                            reportId=self.report_id).execute()
+
+    def download_report(self, report_id, account_name , blob_access_key, container_name ):
+        self.account_name = account_name
+        self.blob_access_key = blob_access_key
+        self.container_name = container_name
+        
+        service = self.service
+
+        request = service.reports().files().list(
+            profileId=self.profile_id, reportId=report_id).execute()
+        file_id = request["items"][0]["id"]
+
+        self.__download_file_to_df(
+            service, report_id, file_id)
+
+    def __download_file_to_df(self, service, report_id, file_id):
+        report_file = service.files().get(
+            reportId=report_id, fileId=file_id).execute()
+
+        if report_file['status'] == 'REPORT_AVAILABLE':
+            download_url = report_file["urls"]["apiUrl"]
+            response, content = self.http.request(download_url)
+
+            content_split = content.split(b"\n\nReport Fields\n")
+            s = str(content_split[1], "utf-8")
+            data = StringIO(s)
+            df = pd.read_csv(data)
+            df = df[:-1]
+            df.columns = df.columns.str.replace(" ", "_")
+            df.columns = df.columns.str.replace("(", "_")
+            df.columns = df.columns.str.replace(")", "_")
+            df.columns = df.columns.str.replace("-", "_")
+
+            output = df.to_csv(index=False)
+            yesterday_date = date.today() - timedelta(days=1)
+            self.upload(yesterday_date,output)
+
+            
+            
+
+        else:
+            print("file not available yet. retry in a few minutes.")
+
+        print("file uploaded successfully")
+
+
+    def upload(self,date,data):
+
+        blob_service_client = BlockBlobService(
+            account_name=self.account_name,
+            account_key=self.blob_access_key)
+
+        blob_service_client.create_container(self.container_name)
+        blob_service_client.create_blob_from_text(self.container_name, "dcm/{}.csv".format(date), data)
+        print("Data upload successful")
+
+    def __write_id_to_file(self, file_name, report_id):
+        file = open(file_name, "w+")
+        file.write(report_id)
+        file.close()
+
+    def __read_id_from_file(self, file_name):
+        file = open(file_name, "r")
+        report_id = file.read()
+        os.remove(file_name)
+
+        return report_id
